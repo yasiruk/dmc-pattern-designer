@@ -138,6 +138,7 @@
   /* every 10th line darker */
   .cell.major-r { border-right: 1px solid #999; }
   .cell.major-b { border-bottom: 1px solid #999; }
+  .cell.sel-region { box-shadow: inset 0 0 0 200px rgba(43,122,91,.28); }
 
   .legend-print, .grid-title-print { display: none; }
 
@@ -209,11 +210,15 @@
         <button id="tool-paint" class="active">✏️ Paint</button>
         <button id="tool-erase">🧽 Erase</button>
         <button id="tool-fill">🪣 Fill</button>
+        <button id="tool-select">⬚ Select</button>
       </div>
       <div class="tool-row">
         <button id="undo" title="Undo (⌘/Ctrl+Z)" disabled>↶ Undo</button>
         <button id="redo" title="Redo (⌘/Ctrl+Shift+Z)" disabled>↷ Redo</button>
+        <button id="copy" title="Copy region (⌘/Ctrl+C)" disabled>⧉ Copy</button>
+        <button id="paste" title="Paste (⌘/Ctrl+V)" disabled>📋 Paste</button>
       </div>
+      <div id="hint" style="font-size:11px;color:#888;min-height:14px;margin-bottom:6px"></div>
       <div class="current">
         <span class="chip" id="currentChip"></span>
         <span id="currentLabel">Pick a colour</span>
@@ -515,11 +520,18 @@ document.getElementById("redo").onclick = redo;
 window.addEventListener("keydown", e => {
   const tag = (e.target.tagName || "").toLowerCase();
   if (tag === "input" || tag === "select" || tag === "textarea") return;
+  if (e.key === "Escape") {
+    if (pasteMode) exitPasteMode();
+    else if (selection) clearSelection();
+    return;
+  }
   const mod = e.metaKey || e.ctrlKey;
   if (!mod) return;
   const k = e.key.toLowerCase();
   if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
   else if ((k === "z" && e.shiftKey) || k === "y") { e.preventDefault(); redo(); }
+  else if (k === "c") { if (selection) { e.preventDefault(); copySelection(); } }
+  else if (k === "v") { if (clipboard) { e.preventDefault(); enterPasteMode(); } }
 });
 
 /* ---------- Rendering ---------- */
@@ -533,6 +545,8 @@ function contrastText(hex) {
 }
 
 function buildGrid() {
+  exitPasteMode();
+  clearSelection();
   gridEl.style.gridTemplateColumns = `repeat(${cols}, ${cellSize}px)`;
   gridEl.innerHTML = "";
   for (let r = 0; r < rows; r++) {
@@ -619,21 +633,148 @@ function floodFill(r, c, target, replacement) {
 gridEl.addEventListener("pointerdown", e => {
   const cell = e.target.closest(".cell");
   if (!cell) return;
+  const r = +cell.dataset.r, c = +cell.dataset.c;
+
+  if (pasteMode) { commitPaste(r, c); return; }
+
+  if (tool === "select") {
+    selecting = true;
+    selAnchor = { r, c };
+    gridEl.setPointerCapture(e.pointerId);
+    setSelection(r, c, r, c);
+    return;
+  }
+
   // one history entry per stroke (skip no-op paint/fill with no colour selected)
   if (tool === "erase" || current) pushHistory();
   // record a colour as "recently used" only when it's actually applied to the canvas
   if ((tool === "paint" || tool === "fill") && current) addRecent(current.__idx);
   painting = true;
   gridEl.setPointerCapture(e.pointerId);
-  applyTool(+cell.dataset.r, +cell.dataset.c);
+  applyTool(r, c);
 });
 gridEl.addEventListener("pointermove", e => {
-  if (!painting || tool === "fill") return;
   const el = document.elementFromPoint(e.clientX, e.clientY);
   const cell = el && el.closest ? el.closest(".cell") : null;
-  if (cell && gridEl.contains(cell)) applyTool(+cell.dataset.r, +cell.dataset.c);
+  const inGrid = cell && gridEl.contains(cell);
+
+  if (pasteMode) {
+    if (inGrid) showPasteAt(+cell.dataset.r, +cell.dataset.c);
+    return;
+  }
+  if (selecting) {
+    if (inGrid) setSelection(selAnchor.r, selAnchor.c, +cell.dataset.r, +cell.dataset.c);
+    return;
+  }
+  if (!painting || tool === "fill") return;
+  if (inGrid) applyTool(+cell.dataset.r, +cell.dataset.c);
 });
-window.addEventListener("pointerup", () => { painting = false; });
+window.addEventListener("pointerup", () => { painting = false; selecting = false; });
+
+/* ---------- Select / copy / paste ---------- */
+let selection = null;              // {r0,c0,r1,c1}
+let selAnchor = null, selecting = false;
+let clipboard = null;              // 2D array of DMC indices / null
+let pasteMode = false, previewCells = [];
+
+function getCell(r, c) { return gridEl.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`); }
+function setHint(t) { document.getElementById("hint").textContent = t || ""; }
+
+function renderSelection() {
+  gridEl.querySelectorAll(".cell.sel-region").forEach(el => el.classList.remove("sel-region"));
+  if (!selection) return;
+  const { r0, c0, r1, c1 } = selection;
+  for (let r = r0; r <= r1; r++)
+    for (let c = c0; c <= c1; c++) {
+      const cell = getCell(r, c);
+      if (cell) cell.classList.add("sel-region");
+    }
+}
+function setSelection(ar, ac, br, bc) {
+  selection = { r0: Math.min(ar, br), c0: Math.min(ac, bc), r1: Math.max(ar, br), c1: Math.max(ac, bc) };
+  renderSelection();
+  document.getElementById("copy").disabled = false;
+  const w = selection.c1 - selection.c0 + 1, h = selection.r1 - selection.r0 + 1;
+  setHint(`Selected ${w} × ${h}. Copy with ⌘/Ctrl+C.`);
+}
+function clearSelection() {
+  selection = null;
+  renderSelection();
+  document.getElementById("copy").disabled = true;
+}
+
+function copySelection() {
+  if (!selection) return;
+  const { r0, c0, r1, c1 } = selection;
+  clipboard = [];
+  for (let r = r0; r <= r1; r++) {
+    const row = [];
+    for (let c = c0; c <= c1; c++) row.push(data[r][c]);
+    clipboard.push(row);
+  }
+  document.getElementById("paste").disabled = false;
+  setHint(`Copied ${c1 - c0 + 1} × ${r1 - r0 + 1}. Click Paste, then click a cell to place it.`);
+}
+
+function enterPasteMode() {
+  if (!clipboard) return;
+  clearSelection();
+  pasteMode = true;
+  document.getElementById("paste").classList.add("active");
+  setHint("Paste mode: move over the grid, click to place. Esc to cancel.");
+}
+function exitPasteMode() {
+  if (!pasteMode) return;
+  clearPreview();
+  pasteMode = false;
+  document.getElementById("paste").classList.remove("active");
+  setHint("");
+}
+function clearPreview() {
+  previewCells.forEach(({ r, c }) => {
+    const cell = getCell(r, c);
+    if (cell) { cell.style.outline = ""; cell.style.outlineOffset = ""; renderCell(cell, r, c); }
+  });
+  previewCells = [];
+}
+function showPasteAt(r0, c0) {
+  clearPreview();
+  const cb = clipboard;
+  for (let i = 0; i < cb.length; i++)
+    for (let j = 0; j < cb[i].length; j++) {
+      const r = r0 + i, c = c0 + j;
+      if (r < 0 || c < 0 || r >= rows || c >= cols) continue;
+      const cell = getCell(r, c);
+      if (!cell) continue;
+      const idx = cb[i][j];
+      cell.style.background = idx == null ? "#fff" : DMC[idx][2];
+      cell.textContent = (showSym && idx != null) ? symbolFor(idx) : "";
+      cell.style.outline = "1px dashed rgba(0,0,0,.55)";
+      cell.style.outlineOffset = "-1px";
+      previewCells.push({ r, c });
+    }
+}
+function commitPaste(r0, c0) {
+  if (!clipboard) return;
+  pushHistory();
+  const cb = clipboard;
+  for (let i = 0; i < cb.length; i++)
+    for (let j = 0; j < cb[i].length; j++) {
+      const r = r0 + i, c = c0 + j;
+      if (r < 0 || c < 0 || r >= rows || c >= cols) continue;
+      data[r][c] = cb[i][j];
+    }
+  clearPreview();
+  new Set(cb.flat().filter(x => x != null)).forEach(idx => addRecent(idx));
+  pasteMode = false;
+  document.getElementById("paste").classList.remove("active");
+  paintAll();
+  updateLegend();
+  setHint("Pasted ✓ — click Paste to place another copy.");
+}
+
+document.getElementById("copy").onclick = copySelection;
+document.getElementById("paste").onclick = enterPasteMode;
 
 /* ---------- Palette ---------- */
 const paletteEl = document.getElementById("palette");
@@ -717,13 +858,19 @@ function updateLegend() {
 
 /* ---------- Tools UI ---------- */
 function setTool(t) {
+  exitPasteMode();
+  if (t !== "select") clearSelection();
   tool = t;
-  document.querySelectorAll(".tool-row button").forEach(b => b.classList.remove("active"));
-  document.getElementById("tool-" + t).classList.add("active");
+  ["tool-paint","tool-erase","tool-fill","tool-select"].forEach(id =>
+    document.getElementById(id).classList.remove("active"));
+  const btn = document.getElementById("tool-" + t);
+  if (btn) btn.classList.add("active");
+  setHint(t === "select" ? "Drag on the canvas to select a rectangle." : "");
 }
 document.getElementById("tool-paint").onclick = () => setTool("paint");
 document.getElementById("tool-erase").onclick = () => setTool("erase");
 document.getElementById("tool-fill").onclick  = () => setTool("fill");
+document.getElementById("tool-select").onclick = () => setTool("select");
 
 /* ---------- Controls ---------- */
 document.getElementById("resize").onclick = () => {
@@ -776,6 +923,8 @@ document.getElementById("over").onchange  = e => { over  = +e.target.value; upda
 
 /* ---------- Print ---------- */
 document.getElementById("print").onclick = () => {
+  exitPasteMode();
+  clearSelection();
   const t = document.getElementById("title").value || "DMC Pattern";
   document.getElementById("printTitle").textContent =
     `${t}  ·  ${cols} × ${rows} stitches  ·  ${finishedText()}`;
