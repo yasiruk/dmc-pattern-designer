@@ -102,6 +102,7 @@
     color: rgba(0,0,0,.55);
   }
   .swatch.sel { outline: 3px solid var(--accent); z-index: 1; }
+  .palette.recent { max-height: none; grid-template-columns: repeat(auto-fill, minmax(30px, 1fr)); }
 
   .current {
     display: flex; align-items: center; gap: 10px;
@@ -221,6 +222,10 @@
 
     <fieldset>
       <legend>DMC palette</legend>
+      <div id="recentWrap" style="display:none;margin-bottom:8px">
+        <div style="font-size:11px;color:#888;margin-bottom:3px">Recently used</div>
+        <div class="palette recent" id="recent"></div>
+      </div>
       <div class="search-wrap">
         <input type="text" id="search" placeholder="Search DMC # or name…">
       </div>
@@ -648,13 +653,44 @@ function buildPalette(filter) {
   });
 }
 
-function selectColor(i) {
+function selectColor(i, record = true) {
   current = { code: DMC[i][0], name: DMC[i][1], hex: DMC[i][2], __idx: i };
   if (tool === "erase") setTool("paint");
   document.getElementById("currentChip").style.background = current.hex;
   document.getElementById("currentLabel").textContent = `DMC ${current.code} — ${current.name}`;
+  if (record) addRecent(i);
   document.querySelectorAll(".swatch.sel").forEach(s => s.classList.remove("sel"));
   buildPalette(document.getElementById("search").value);
+}
+
+/* ---------- Recently used ---------- */
+const RECENT_KEY = "dmc-recent", RECENT_MAX = 12;
+let recent = [];
+try { recent = JSON.parse(localStorage.getItem(RECENT_KEY)) || []; } catch (e) { recent = []; }
+
+function addRecent(i) {
+  recent = [i, ...recent.filter(x => x !== i)].slice(0, RECENT_MAX);
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch (e) {}
+  buildRecent();
+}
+function buildRecent() {
+  const wrap = document.getElementById("recentWrap");
+  const el = document.getElementById("recent");
+  el.innerHTML = "";
+  if (!recent.length) { wrap.style.display = "none"; return; }
+  wrap.style.display = "block";
+  recent.forEach(i => {
+    const [code, name, hex] = DMC[i];
+    const sw = document.createElement("div");
+    sw.className = "swatch";
+    sw.style.background = hex;
+    sw.style.color = contrastText(hex);
+    sw.title = `DMC ${code} — ${name}`;
+    sw.textContent = code.length <= 4 ? code : "";
+    if (current && current.__idx === i) sw.classList.add("sel");
+    sw.addEventListener("click", () => selectColor(i));
+    el.appendChild(sw);
+  });
 }
 
 /* ---------- Legend (for print) ---------- */
@@ -788,8 +824,9 @@ document.getElementById("loadfile").onchange = e => {
 initData(false);
 buildGrid();
 updateFinished();
+selectColor(DMC.findIndex(d => d[0] === "310"), false); // black default (don't log to recent)
+buildRecent();
 buildPalette("");
-selectColor(DMC.findIndex(d => d[0] === "310")); // black default
 </script>
 </body>
 </html>
