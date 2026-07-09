@@ -621,6 +621,8 @@ gridEl.addEventListener("pointerdown", e => {
   if (!cell) return;
   // one history entry per stroke (skip no-op paint/fill with no colour selected)
   if (tool === "erase" || current) pushHistory();
+  // record a colour as "recently used" only when it's actually applied to the canvas
+  if ((tool === "paint" || tool === "fill") && current) addRecent(current.__idx);
   painting = true;
   gridEl.setPointerCapture(e.pointerId);
   applyTool(+cell.dataset.r, +cell.dataset.c);
@@ -653,12 +655,11 @@ function buildPalette(filter) {
   });
 }
 
-function selectColor(i, record = true) {
+function selectColor(i) {
   current = { code: DMC[i][0], name: DMC[i][1], hex: DMC[i][2], __idx: i };
   if (tool === "erase") setTool("paint");
   document.getElementById("currentChip").style.background = current.hex;
   document.getElementById("currentLabel").textContent = `DMC ${current.code} — ${current.name}`;
-  if (record) addRecent(i);
   document.querySelectorAll(".swatch.sel").forEach(s => s.classList.remove("sel"));
   buildPalette(document.getElementById("search").value);
 }
@@ -824,7 +825,7 @@ document.getElementById("loadfile").onchange = e => {
 initData(false);
 buildGrid();
 updateFinished();
-selectColor(DMC.findIndex(d => d[0] === "310"), false); // black default (don't log to recent)
+selectColor(DMC.findIndex(d => d[0] === "310")); // black default
 buildRecent();
 buildPalette("");
 </script>
