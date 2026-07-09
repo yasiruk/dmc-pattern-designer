@@ -209,6 +209,10 @@
         <button id="tool-erase">🧽 Erase</button>
         <button id="tool-fill">🪣 Fill</button>
       </div>
+      <div class="tool-row">
+        <button id="undo" title="Undo (⌘/Ctrl+Z)" disabled>↶ Undo</button>
+        <button id="redo" title="Redo (⌘/Ctrl+Shift+Z)" disabled>↷ Redo</button>
+      </div>
       <div class="current">
         <span class="chip" id="currentChip"></span>
         <span id="currentLabel">Pick a colour</span>
@@ -459,6 +463,60 @@ function initData(preserve) {
   }
 }
 
+/* ---------- Undo / redo history ---------- */
+let undoStack = [], redoStack = [];
+const HISTORY_LIMIT = 100;
+
+function snapshot() {
+  return { cols, rows, data: data.map(row => row.slice()) };
+}
+function pushHistory() {
+  undoStack.push(snapshot());
+  if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+  redoStack = [];
+  updateHistoryButtons();
+}
+function resetHistory() {
+  undoStack = []; redoStack = [];
+  updateHistoryButtons();
+}
+function restore(s) {
+  cols = s.cols; rows = s.rows;
+  data = s.data.map(row => row.slice());
+  document.getElementById("cols").value = cols;
+  document.getElementById("rows").value = rows;
+  buildGrid();
+  updateFinished();
+  updateLegend();
+}
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(snapshot());
+  restore(undoStack.pop());
+  updateHistoryButtons();
+}
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(snapshot());
+  restore(redoStack.pop());
+  updateHistoryButtons();
+}
+function updateHistoryButtons() {
+  document.getElementById("undo").disabled = !undoStack.length;
+  document.getElementById("redo").disabled = !redoStack.length;
+}
+document.getElementById("undo").onclick = undo;
+document.getElementById("redo").onclick = redo;
+window.addEventListener("keydown", e => {
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "select" || tag === "textarea") return;
+  const mod = e.metaKey || e.ctrlKey;
+  if (!mod) return;
+  const k = e.key.toLowerCase();
+  if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+  else if ((k === "z" && e.shiftKey) || k === "y") { e.preventDefault(); redo(); }
+});
+
 /* ---------- Rendering ---------- */
 const gridEl = document.getElementById("grid");
 
@@ -556,6 +614,8 @@ function floodFill(r, c, target, replacement) {
 gridEl.addEventListener("pointerdown", e => {
   const cell = e.target.closest(".cell");
   if (!cell) return;
+  // one history entry per stroke (skip no-op paint/fill with no colour selected)
+  if (tool === "erase" || current) pushHistory();
   painting = true;
   gridEl.setPointerCapture(e.pointerId);
   applyTool(+cell.dataset.r, +cell.dataset.c);
@@ -630,6 +690,7 @@ document.getElementById("tool-fill").onclick  = () => setTool("fill");
 
 /* ---------- Controls ---------- */
 document.getElementById("resize").onclick = () => {
+  pushHistory();
   cols = clamp(+document.getElementById("cols").value, 1, 120);
   rows = clamp(+document.getElementById("rows").value, 1, 120);
   cellSize = clamp(+document.getElementById("cellsize").value, 6, 40);
@@ -640,6 +701,7 @@ document.getElementById("resize").onclick = () => {
 };
 document.getElementById("clear").onclick = () => {
   if (!confirm("Clear the whole pattern?")) return;
+  pushHistory();
   initData(false);
   paintAll();
   updateLegend();
@@ -712,6 +774,7 @@ document.getElementById("loadfile").onchange = e => {
       document.getElementById("over").value = over;
       document.getElementById("showsym").checked = showSym;
       document.getElementById("title").value = p.title || "";
+      resetHistory();
       buildGrid();
       updateFinished();
       updateLegend();
