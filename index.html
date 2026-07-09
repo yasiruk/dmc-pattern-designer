@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DMC Pattern Designer</title>
+<style>
+  :root {
+    --bg: #f4f4f2;
+    --panel: #ffffff;
+    --border: #d5d5d0;
+    --ink: #222;
+    --accent: #2b7a5b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 18px;
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { font-size: 12px; color: #888; }
+
+  .layout {
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+    align-items: flex-start;
+  }
+  .sidebar {
+    width: 300px;
+    flex: 0 0 300px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+  }
+  .main { flex: 1; min-width: 0; }
+
+  fieldset {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 0 0 14px;
+    padding: 10px 12px;
+  }
+  legend { font-size: 12px; font-weight: 600; color: #555; padding: 0 4px; }
+
+  label.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0; font-size: 13px; }
+  input[type="number"] { width: 70px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; }
+  input[type="text"] { width: 100%; padding: 5px 6px; border: 1px solid var(--border); border-radius: 4px; }
+
+  button {
+    font: inherit;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    background: #fafafa;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  button:hover { background: #f0f0f0; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { filter: brightness(1.05); }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .tool-row { display: flex; gap: 6px; margin-bottom: 8px; }
+  .tool-row button.active { outline: 2px solid var(--accent); }
+
+  .search-wrap { margin-bottom: 8px; }
+  .palette {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+    gap: 4px;
+    max-height: 240px;
+    overflow-y: auto;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .swatch {
+    aspect-ratio: 1;
+    border-radius: 3px;
+    border: 1px solid rgba(0,0,0,.2);
+    cursor: pointer;
+    position: relative;
+    font-size: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(0,0,0,.55);
+  }
+  .swatch.sel { outline: 3px solid var(--accent); z-index: 1; }
+
+  .current {
+    display: flex; align-items: center; gap: 10px;
+    margin: 8px 0; font-size: 13px;
+  }
+  .current .chip { width: 30px; height: 30px; border-radius: 5px; border: 1px solid rgba(0,0,0,.25); }
+
+  .grid-wrap {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow: auto;
+  }
+  #grid {
+    display: grid;
+    border-top: 1px solid #bbb;
+    border-left: 1px solid #bbb;
+    width: max-content;
+    user-select: none;
+    touch-action: none;
+  }
+  .cell {
+    border-right: 1px solid #e5e5e5;
+    border-bottom: 1px solid #e5e5e5;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: rgba(0,0,0,.55);
+  }
+  /* every 10th line darker */
+  .cell.major-r { border-right: 1px solid #999; }
+  .cell.major-b { border-bottom: 1px solid #999; }
+
+  .legend-print, .grid-title-print { display: none; }
+
+  /* ---------- PRINT ---------- */
+  @page { size: A4; margin: 12mm; }
+  @media print {
+    body { background: #fff; }
+    header, .sidebar, .no-print { display: none !important; }
+    .layout { padding: 0; display: block; }
+    .grid-wrap { border: none; padding: 0; overflow: visible; }
+    .grid-title-print { display: block; font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    #grid { break-inside: avoid; }
+    .cell { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .legend-print {
+      display: block;
+      margin-top: 14px;
+      break-inside: avoid;
+    }
+    .legend-print h2 { font-size: 13px; margin: 0 0 6px; }
+    .legend-print table { border-collapse: collapse; font-size: 11px; }
+    .legend-print td { border: 1px solid #999; padding: 2px 6px; }
+    .legend-print .sw {
+      display: inline-block; width: 14px; height: 14px;
+      border: 1px solid #666; vertical-align: middle;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>DMC Pattern Designer</h1>
+  <span class="sub">Design a cross-stitch chart with DMC floss colours · print to A4</span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar no-print">
+    <fieldset>
+      <legend>Canvas</legend>
+      <label class="row">Width (stitches) <input type="number" id="cols" min="1" max="120" value="40"></label>
+      <label class="row">Height (stitches) <input type="number" id="rows" min="1" max="120" value="40"></label>
+      <label class="row">Cell size (px) <input type="number" id="cellsize" min="6" max="40" value="16"></label>
+      <label class="row">Fabric count (per inch)
+        <select id="count">
+          <option value="6">6 ct</option>
+          <option value="11">11 ct (Aida)</option>
+          <option value="14" selected>14 ct (Aida)</option>
+          <option value="16">16 ct (Aida)</option>
+          <option value="18">18 ct (Aida)</option>
+          <option value="22">22 ct (Hardanger)</option>
+          <option value="25">25 ct (evenweave)</option>
+          <option value="28">28 ct (linen)</option>
+          <option value="32">32 ct (linen)</option>
+          <option value="36">36 ct (linen)</option>
+        </select>
+      </label>
+      <label class="row">Stitch over <select id="over"><option value="1" selected>1 thread</option><option value="2">2 threads</option></select></label>
+      <div id="finished" style="font-size:12px;color:#555;margin:6px 0"></div>
+      <label class="row">Show symbols <input type="checkbox" id="showsym"></label>
+      <div class="btn-row" style="margin-top:8px">
+        <button id="resize" class="primary">Apply size</button>
+        <button id="clear">Clear all</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Tools</legend>
+      <div class="tool-row">
+        <button id="tool-paint" class="active">✏️ Paint</button>
+        <button id="tool-erase">🧽 Erase</button>
+        <button id="tool-fill">🪣 Fill</button>
+      </div>
+      <div class="current">
+        <span class="chip" id="currentChip"></span>
+        <span id="currentLabel">Pick a colour</span>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>DMC palette</legend>
+      <div class="search-wrap">
+        <input type="text" id="search" placeholder="Search DMC # or name…">
+      </div>
+      <div class="palette" id="palette"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Project</legend>
+      <label class="row" style="justify-content:flex-start;gap:8px">Title <input type="text" id="title" placeholder="My pattern"></label>
+      <div class="btn-row">
+        <button id="print" class="primary">🖨️ Print A4</button>
+        <button id="save">💾 Save</button>
+        <button id="load">📂 Load</button>
+      </div>
+      <input type="file" id="loadfile" accept="application/json" style="display:none">
+    </fieldset>
+  </aside>
+
+  <main class="main">
+    <div class="grid-wrap">
+      <div class="grid-title-print" id="printTitle"></div>
+      <div id="grid"></div>
+      <div class="legend-print" id="legend"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+/* ---------- DMC palette (common subset) ---------- */
+const DMC = [
+  ["White","White","#FFFFFF"],["Ecru","Ecru","#F0EAD6"],
+  ["208","Lavender-VY DK","#835B8B"],["209","Lavender-DK","#A992B0"],["210","Lavender-MD","#C4A9CB"],["211","Lavender-LT","#E3D3E4"],
+  ["221","Shell Pink-VY DK","#8A4C48"],["223","Shell Pink-LT","#CC8A79"],["224","Shell Pink-VY LT","#E8B7A9"],
+  ["225","Shell Pink-UL VY LT","#FFDFD3"],
+  ["300","Mahogany-VY DK","#6C2C08"],["301","Mahogany-MD","#A54E31"],["304","Christmas Red-MD","#B71230"],
+  ["307","Lemon","#FDE85E"],["309","Rose-DK","#BA3556"],["310","Black","#000000"],["311","Wedgewood-MD DK","#1C5164"],
+  ["312","Baby Blue-VY DK","#35688A"],["315","Antique Mauve-MD DK","#814952"],["316","Antique Mauve-MD","#B27C87"],
+  ["317","Pewter Gray","#6C6C6C"],["318","Steel Gray-LT","#ABABAB"],["319","Pistachio Grn-VY DK","#385B34"],
+  ["320","Pistachio Green-MD","#69865A"],["321","Christmas Red","#C72B3B"],["322","Baby Blue-DK","#5083A8"],
+  ["326","Rose-VY DK","#AC2A45"],["327","Violet-DK","#5E4374"],["333","Blue Violet-VY DK","#5C529A"],
+  ["334","Baby Blue-MD","#6F9BC0"],["335","Rose","#DA4D6D"],["336","Blue-Navy","#22385B"],
+  ["340","Blue Violet-MD","#9C97C7"],["341","Blue Violet-LT","#B4B7DB"],["347","Salmon-VY DK","#B23A3A"],
+  ["349","Coral-DK","#D0393B"],["350","Coral-MD","#E15C4E"],["351","Coral","#F08674"],["352","Coral-LT","#FDA894"],
+  ["353","Peach","#FED7C7"],["355","Terra Cotta-DK","#984B3A"],["356","Terra Cotta-MD","#C17862"],
+  ["367","Pistachio Green-DK","#587A4B"],["368","Pistachio Green-LT","#A6C08A"],["369","Pistachio Green-VY LT","#D7E8C2"],
+  ["370","Mustard-MD","#B89150"],["371","Mustard","#C29E63"],
+  ["400","Mahogany-DK","#8F480F"],["402","Mahogany-VY LT","#F1A981"],["407","Desert Sand-DK","#BC8368"],
+  ["413","Pewter Gray-DK","#565656"],["414","Steel Gray-DK","#8C8C8C"],["415","Pearl Gray","#D2D3D6"],
+  ["420","Hazelnut Brown-DK","#A17E3E"],["422","Hazelnut Brown-LT","#CBA678"],
+  ["433","Brown-MD","#8A5A2C"],["434","Brown-LT","#A16B3C"],["435","Brown-VY LT","#B87C4A"],
+  ["436","Tan","#C89361"],["437","Tan-LT","#DDB584"],
+  ["444","Lemon-DK","#FFD600"],["445","Lemon-LT","#FFF39B"],
+  ["451","Shell Gray-DK","#918079"],["452","Shell Gray-MD","#BBA9A0"],["453","Shell Gray-LT","#D5C7BF"],
+  ["469","Avocado Green","#75802F"],["470","Avocado Green-LT","#94A03C"],["471","Avocado Green-VY LT","#B4BE75"],
+  ["472","Avocado Green-UL LT","#D9DE98"],
+  ["498","Christmas Red-DK","#A81127"],
+  ["500","Blue Green-VY DK","#204334"],["501","Blue Green-DK","#37634F"],["502","Blue Green","#5E8770"],
+  ["503","Blue Green-MD","#8BAE9A"],["504","Blue Green-VY LT","#C2D8C9"],
+  ["517","Wedgewood-DK","#3A748F"],["518","Wedgewood-LT","#4E93A8"],["519","Sky Blue","#8FBFD3"],
+  ["522","Fern Green","#969E82"],["523","Fern Green-LT","#ABB193"],["524","Fern Green-VY LT","#C6CBAE"],
+  ["535","Ash Gray-VY LT","#616163"],
+  ["543","Beige Brown-UL VY LT","#EBD9C2"],
+  ["550","Violet-VY DK","#5A2465"],["552","Violet-MD","#803A8C"],["553","Violet","#9B5BA5"],["554","Violet-LT","#D6ADCF"],
+  ["561","Jade-VY DK","#2E6B4F"],["562","Jade-MD","#54987A"],["563","Jade-LT","#8FC6A6"],["564","Jade-VY LT","#B4D9C2"],
+  ["580","Moss Green-DK","#888A0E"],["581","Moss Green","#A5A626"],
+  ["597","Turquoise","#5F9DAE"],["598","Turquoise-LT","#93C4CC"],
+  ["600","Cranberry-VY DK","#CE365F"],["601","Cranberry-DK","#D53A72"],["602","Cranberry-MD","#E24C87"],
+  ["603","Cranberry","#F489AE"],["604","Cranberry-LT","#F8A9C2"],["605","Cranberry-VY LT","#FDC4D5"],
+  ["606","Bright Orange-Red","#FA4405"],["608","Bright Orange","#FD6A2E"],
+  ["610","Drab Brown-DK","#7C6A4E"],["611","Drab Brown","#957A54"],["612","Drab Brown-LT","#B69B72"],
+  ["613","Drab Brown-VY LT","#D3BE97"],
+  ["632","Desert Sand-UL VY DK","#875039"],
+  ["640","Beige Gray-VY DK","#948A73"],["642","Beige Gray-DK","#AFA487"],["644","Beige Gray-MD","#D2CAB2"],
+  ["645","Beaver Gray-VY DK","#6E6A63"],["646","Beaver Gray-DK","#877E73"],["647","Beaver Gray-MD","#A29C93"],
+  ["648","Beaver Gray-LT","#BBB6AF"],
+  ["666","Christmas Red-Bright","#E01230"],
+  ["676","Old Gold-LT","#E5C583"],["677","Old Gold-VY LT","#F0DCA9"],
+  ["680","Old Gold-DK","#C69034"],["699","Christmas Green","#106138"],["700","Christmas Green-Bright","#0E7A3A"],
+  ["701","Christmas Green-LT","#3A8C43"],["702","Kelly Green","#4CA14E"],["703","Chartreuse","#7DBB5A"],
+  ["704","Chartreuse-Bright","#A2CE58"],["712","Cream","#FBF3DE"],
+  ["718","Plum","#9E2A7A"],["720","Orange Spice-DK","#DB5A24"],["721","Orange Spice-MD","#F0824B"],
+  ["722","Orange Spice-LT","#F6A377"],
+  ["725","Topaz","#FDC63F"],["726","Topaz-LT","#FDD34F"],["727","Topaz-VY LT","#FEEFA4"],
+  ["728","Topaz","#E6B94C"],
+  ["729","Old Gold-MD","#D2A44E"],["730","Olive Green-VY DK","#827115"],["732","Olive Green","#8E7C1F"],
+  ["733","Olive Green-MD","#B6A03F"],["734","Olive Green-LT","#C9B461"],
+  ["738","Tan-VY LT","#ECCFA3"],["739","Tan-UL VY LT","#F7E5C9"],
+  ["740","Tangerine","#FF7F1E"],["741","Tangerine-MD","#FF9016"],["742","Tangerine-LT","#FFB84E"],
+  ["743","Yellow-MD","#FED471"],["744","Yellow-Pale","#FEE08D"],["745","Yellow-LT Pale","#FCE5AB"],
+  ["746","Off White","#F6F2DE"],
+  ["747","Sky Blue-VY LT","#D2ECEC"],
+  ["754","Peach-LT","#F5C7AE"],["758","Terra Cotta-VY LT","#E4A183"],
+  ["760","Salmon","#EAA0A0"],["761","Salmon-LT","#F5C0BE"],["762","Pearl Gray-VY LT","#E5E6E7"],
+  ["772","Yellow Green-VY LT","#DDE8BC"],
+  ["775","Baby Blue-VY LT","#D6E6F0"],
+  ["776","Pink-MD","#F6B2C1"],["777","Raspberry-VY DK","#912A3E"],
+  ["778","Antique Mauve-VY LT","#DAB5B7"],
+  ["780","Topaz-UL VY DK","#946013"],["781","Topaz-VY DK","#A56E1C"],["782","Topaz-DK","#B67F1E"],
+  ["783","Topaz-MD","#CF9B33"],
+  ["791","Cornflower Blue-VY DK","#403A6B"],["792","Cornflower Blue-DK","#4E5285"],["793","Cornflower Blue-MD","#7178A5"],
+  ["794","Cornflower Blue-LT","#9AA0C3"],["796","Royal Blue-DK","#1D466E"],["797","Royal Blue","#22558A"],
+  ["798","Delft Blue-DK","#436193"],["799","Delft Blue-MD","#748EBC"],["800","Delft Blue-Pale","#C0CFE3"],
+  ["801","Coffee Brown-DK","#653A1E"],
+  ["803","Baby Blue-UL VY DK","#2A5A7C"],
+  ["806","Peacock Blue-DK","#3C97AA"],["807","Peacock Blue","#5FADBE"],
+  ["809","Delft Blue","#98AAD0"],
+  ["813","Blue-LT","#A0C2DA"],["814","Garnet-DK","#7C0B26"],["815","Garnet-MD","#8E132E"],["816","Garnet","#A01634"],
+  ["817","Coral Red-VY DK","#C51A2E"],["818","Baby Pink","#FCDDDE"],["819","Baby Pink-LT","#FCE9E9"],
+  ["820","Royal Blue-VY DK","#183659"],["822","Beige Gray-LT","#E3DDCA"],
+  ["823","Navy Blue-DK","#1B2F52"],["824","Blue-VY DK","#3A7292"],["825","Blue-DK","#4A8AAC"],["826","Blue-MD","#6DA6C4"],
+  ["827","Blue-VY LT","#B6DCEC"],["828","Blue-UL VY LT","#C6E5EE"],
+  ["829","Golden Olive-VY DK","#7B6A2F"],["830","Golden Olive-DK","#8C793A"],["831","Golden Olive-MD","#A08A45"],
+  ["832","Golden Olive","#B39A4C"],["833","Golden Olive-LT","#C6B06A"],["834","Golden Olive-VY LT","#D9C58A"],
+  ["838","Beige Brown-VY DK","#54402C"],["839","Beige Brown-DK","#665039"],["840","Beige Brown-MD","#87715A"],
+  ["841","Beige Brown-LT","#A88E77"],["842","Beige Brown-VY LT","#C7B29B"],
+  ["844","Beaver Gray-UL DK","#4B4B4A"],
+  ["869","Hazelnut Brown-VY DK","#836232"],
+  ["890","Pistachio Grn-UL DK","#274A2A"],["891","Carnation-DK","#F84D69"],["892","Carnation-MD","#FC7A8A"],
+  ["893","Carnation-LT","#F98DA0"],["894","Carnation-VY LT","#FDACBB"],
+  ["895","Hunter Green-VY DK","#31541F"],["898","Coffee Brown-VY DK","#4B2A16"],["899","Rose-MD","#EC8299"],
+  ["900","Burnt Orange-DK","#D5451A"],["902","Garnet-VY DK","#7E2130"],
+  ["904","Parrot Green-VY DK","#4F7024"],["905","Parrot Green-DK","#5C842A"],["906","Parrot Green-MD","#7FAE3B"],
+  ["907","Parrot Green-LT","#B0CB55"],["909","Emerald Green-VY DK","#1F6E4C"],["910","Emerald Green-DK","#238055"],
+  ["911","Emerald Green-MD","#2C9A66"],["912","Emerald Green-LT","#48B27C"],["913","Nile Green-MD","#6DC08C"],
+  ["915","Plum-DK","#871A63"],
+  ["917","Plum-MD","#9C2377"],["918","Red Copper-DK","#833015"],["919","Red Copper","#A33B18"],
+  ["920","Copper-MD","#B0491F"],["921","Copper","#C25A2C"],["922","Copper-LT","#DD7239"],
+  ["924","Gray Green-VY DK","#516769"],["926","Gray Green-MD","#8AA1A2"],["927","Gray Green-LT","#B0C2C1"],
+  ["928","Gray Green-VY LT","#D0D9D6"],
+  ["930","Antique Blue-DK","#3D586E"],["931","Antique Blue-MD","#5A7791"],["932","Antique Blue-LT","#98B0C2"],
+  ["934","Black Avocado Green","#33391F"],["935","Avocado Green-DK","#3A421F"],["936","Avocado Grn-VY DK","#464C22"],
+  ["937","Avocado Green-MD","#647027"],["938","Coffee Brown-UL DK","#3B2115"],["939","Navy Blue-VY DK","#141E38"],
+  ["943","Aquamarine-MD","#3EA98A"],["945","Tawny","#F5CDAB"],
+  ["946","Burnt Orange-MD","#E85B18"],["947","Burnt Orange","#F96D1F"],["948","Peach-VY LT","#FDE1D2"],
+  ["950","Desert Sand-LT","#E4BA9E"],["951","Tawny-LT","#FBDDBF"],
+  ["954","Nile Green","#7EC894"],["955","Nile Green-LT","#A6DBAF"],["956","Geranium","#FF7A8A"],["957","Geranium-Pale","#FDAFBB"],
+  ["958","Sea Green-DK","#2FB49B"],["959","Sea Green-MD","#5FCAB4"],["961","Dusty Rose-DK","#D77186"],
+  ["962","Dusty Rose-MD","#E48A9C"],["963","Dusty Rose-UL VY LT","#FDCFD7"],
+  ["964","Sea Green-LT","#9DDCCB"],
+  ["966","Baby Green-MD","#B4D6A5"],
+  ["970","Pumpkin-LT","#FA7B1C"],["971","Pumpkin","#FB6A0E"],["972","Canary-Deep","#FDB512"],["973","Canary-Bright","#FFD900"],
+  ["975","Golden Brown-DK","#8C471B"],["976","Golden Brown-MD","#C67E43"],["977","Golden Brown-LT","#DB9550"],
+  ["986","Forest Green-VY DK","#3A5A32"],["987","Forest Green-DK","#4C7440"],["988","Forest Green-MD","#688C54"],
+  ["989","Forest Green","#84A56D"],
+  ["991","Aquamarine-DK","#3B7A6E"],["992","Aquamarine-LT","#6BB2A3"],["993","Aquamarine-VY LT","#96CBBE"],
+  ["995","Electric Blue-DK","#1591C4"],["996","Electric Blue-MD","#33B4E0"],
+  ["3011","Khaki Green-DK","#847E4C"],["3012","Khaki Green-MD","#9E9860"],["3013","Khaki Green-LT","#B9B78A"],
+  ["3021","Brown Gray-VY DK","#524A3E"],["3022","Brown Gray-MD","#8E8B7A"],["3023","Brown Gray-LT","#ABA48E"],
+  ["3024","Brown Gray-VY LT","#DAD5CA"],
+  ["3031","Mocha Brown-VY DK","#4A3925"],["3032","Mocha Brown-MD","#A99377"],["3033","Mocha Brown-VY LT","#DFD2BC"],
+  ["3041","Antique Violet-MD","#956E7E"],["3042","Antique Violet-LT","#B99CA4"],
+  ["3045","Yellow Beige-DK","#BC9560"],["3046","Yellow Beige-MD","#D6BB8B"],["3047","Yellow Beige-LT","#E7D8B7"],
+  ["3051","Green Gray-DK","#5C5F37"],["3052","Green Gray-MD","#8E9670"],["3053","Green Gray","#A7AC85"],
+  ["3064","Desert Sand","#BC8368"],
+  ["3072","Beaver Gray-VY LT","#DDDED8"],
+  ["3078","Golden Yellow-VY LT","#FCF3C4"],
+  ["3325","Baby Blue-LT","#B7D2E8"],["3326","Rose-LT","#FBB2C0"],
+  ["3328","Salmon-DK","#D75A5F"],["3340","Apricot-MD","#FF836C"],["3341","Apricot","#FBA98F"],["3345","Hunter Green-DK","#3B5730"],
+  ["3346","Hunter Green","#4E7040"],["3347","Yellow Green-MD","#6E9354"],["3348","Yellow Green-LT","#BCCB93"],
+  ["3350","Dusty Rose-UL DK","#B93F5F"],["3354","Dusty Rose-LT","#E8AEB6"],
+  ["3362","Pine Green-DK","#5C6238"],["3363","Pine Green-MD","#6E7A4E"],["3364","Pine Green","#849064"],
+  ["3371","Black Brown","#28190E"],
+  ["3607","Plum-LT","#C63A8C"],["3608","Plum-VY LT","#E37BB2"],["3609","Plum-UL LT","#F4AAD3"],
+  ["3685","Mauve-VY DK","#902040"],["3687","Mauve","#C15974"],["3688","Mauve-MD","#DC9AA3"],["3689","Mauve-LT","#F3C4C9"],
+  ["3705","Melon-DK","#FA5A6E"],["3706","Melon-MD","#FD8592"],["3708","Melon-LT","#FDB0B8"],
+  ["3712","Salmon-MD","#EC7F82"],["3713","Salmon-VY LT","#FDD9D5"],
+  ["3716","Dusty Rose-VY LT","#FBBDC6"],
+  ["3721","Shell Pink-DK","#9E4B46"],["3722","Shell Pink-MD","#B96D64"],
+  ["3726","Antique Mauve-DK","#9C5F6B"],["3727","Antique Mauve-LT","#C99CA5"],
+  ["3731","Dusty Rose-VY DK","#CA5771"],["3733","Dusty Rose","#E3859C"],
+  ["3740","Antique Violet-DK","#785A63"],
+  ["3746","Blue Violet-DK","#726BA6"],
+  ["3750","Antique Blue-VY DK","#2C4456"],["3752","Antique Blue-VY LT","#C0CDD6"],
+  ["3753","Antique Blue-UL VY LT","#DAE3E8"],
+  ["3755","Baby Blue","#93B7D5"],["3756","Baby Blue-UL VY LT","#E8F1F6"],
+  ["3760","Wedgewood-MD","#3E7C97"],
+  ["3765","Peacock Blue-VY DK","#2E7E92"],["3766","Peacock Blue-LT","#63A9BB"],
+  ["3768","Gray Green-DK","#5F7A7A"],
+  ["3770","Tawny-VY LT","#FDE6D3"],["3772","Desert Sand-VY DK","#9C6449"],["3773","Desert Sand-MD","#B87D63"],
+  ["3774","Desert Sand-VY LT","#F1D2BC"],
+  ["3776","Mahogany-LT","#C46B3C"],
+  ["3781","Mocha Brown-DK","#6C543B"],
+  ["3787","Brown Gray-DK","#635B4C"],
+  ["3790","Beige Gray-UL DK","#7A6E5D"],
+  ["3799","Pewter Gray-VY DK","#484849"],
+  ["3801","Melon-VY DK","#E23A54"],
+  ["3802","Antique Mauve-VY DK","#6E323C"],["3803","Mauve-DK","#A62F5A"],["3804","Cyclamen Pink-DK","#DE2F82"],
+  ["3805","Cyclamen Pink","#EC4C97"],["3806","Cyclamen Pink-LT","#FB80B4"],
+  ["3807","Cornflower Blue","#575E93"],
+  ["3808","Turquoise-UL VY DK","#2B6266"],["3809","Turquoise-VY DK","#357076"],["3810","Turquoise-DK","#3E8A90"],
+  ["3811","Turquoise-VY LT","#B3E0E0"],
+  ["3812","Sea Green-VY DK","#279582"],["3813","Blue Green-LT","#B3D4C0"],["3814","Aquamarine","#468A7C"],
+  ["3815","Celadon Green-DK","#487560"],["3816","Celadon Green","#639B82"],["3817","Celadon Green-LT","#9BC2AB"],
+  ["3818","Emerald Grn-UL VY DK","#175E3C"],
+  ["3819","Moss Green-LT","#D5D96A"],
+  ["3820","Straw-DK","#DDB13E"],["3821","Straw","#F0CB63"],["3822","Straw-LT","#F5D97F"],["3823","Yellow-UL Pale","#FEF6D5"],
+  ["3824","Apricot-LT","#FCC5AC"],
+  ["3825","Pumpkin-Pale","#FDB483"],
+  ["3826","Golden Brown","#B06A2E"],["3827","Golden Brown-Pale","#EDB577"],
+  ["3828","Hazelnut Brown","#B08843"],
+  ["3830","Terra Cotta","#BB5F45"],
+  ["3831","Raspberry-DK","#B32E52"],["3832","Raspberry-MD","#DB5473"],["3833","Raspberry-LT","#EB8399"],
+  ["3834","Grape-DK","#722A5C"],["3835","Grape-MD","#945685"],["3836","Grape-LT","#B084A6"],
+  ["3837","Lavender-UL DK","#6B398C"],
+  ["3838","Lavender Blue-DK","#5063A0"],["3839","Lavender Blue-MD","#7683B4"],["3840","Lavender Blue-LT","#AAB6D8"],
+  ["3841","Baby Blue-Pale","#D8E7F1"],
+  ["3842","Wedgewood-VY DK","#245C74"],
+  ["3843","Electric Blue","#149ECE"],["3844","Turquoise-Bright DK","#12A0B0"],["3845","Turquoise-Bright MD","#3DBFCC"],
+  ["3846","Turquoise-Bright LT","#63D6DE"],
+  ["3847","Teal Green-DK","#297069"],["3848","Teal Green-MD","#409491"],["3849","Teal Green-LT","#52B0A6"],
+  ["3850","Green Bright-DK","#1E8C64"],["3851","Green Bright-LT","#3FB48D"],
+  ["3852","Straw-VY DK","#D6A02D"],["3853","Autumn Gold-DK","#F08A2E"],["3854","Autumn Gold-MD","#F5A85A"],
+  ["3855","Autumn Gold-LT","#FBD59C"],
+  ["3856","Mahogany-UL VY LT","#FCCB9E"],["3857","Rosewood-DK","#6E2E22"],["3858","Rosewood-MD","#9A4A3B"],
+  ["3859","Rosewood-LT","#BB8377"],
+  ["3860","Cocoa","#8C6459"],["3861","Cocoa-LT","#AC8B80"],
+  ["3862","Mocha Beige-DK","#8A6A4E"],["3863","Mocha Beige-MD","#A5876A"],["3864","Mocha Beige-LT","#C9AF95"],
+  ["3865","Winter White","#F8F4EC"],
+  ["3866","Mocha Brn-UL VY LT","#EDE4D5"]
+];
+
+const SYMBOLS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz0123456789@#$%&*+=<>?".split("");
+
+/* ---------- State ---------- */
+let cols = 40, rows = 40, cellSize = 16;
+let count = 14, over = 1;
+let showSym = false;
+let tool = "paint";
+let current = null; // {code,name,hex}
+let data = [];      // data[r][c] = index into DMC or null
+
+function initData(preserve) {
+  const old = data;
+  data = [];
+  for (let r = 0; r < rows; r++) {
+    data[r] = [];
+    for (let c = 0; c < cols; c++) {
+      data[r][c] = (preserve && old[r] && old[r][c] != null) ? old[r][c] : null;
+    }
+  }
+}
+
+/* ---------- Rendering ---------- */
+const gridEl = document.getElementById("grid");
+
+function contrastText(hex) {
+  const n = hex.replace("#","");
+  const r = parseInt(n.slice(0,2),16), g = parseInt(n.slice(2,4),16), b = parseInt(n.slice(4,6),16);
+  const lum = (0.299*r + 0.587*g + 0.114*b);
+  return lum > 150 ? "rgba(0,0,0,.6)" : "rgba(255,255,255,.85)";
+}
+
+function buildGrid() {
+  gridEl.style.gridTemplateColumns = `repeat(${cols}, ${cellSize}px)`;
+  gridEl.innerHTML = "";
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cell.style.width = cellSize + "px";
+      cell.style.height = cellSize + "px";
+      if ((c + 1) % 10 === 0) cell.classList.add("major-r");
+      if ((r + 1) % 10 === 0) cell.classList.add("major-b");
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      gridEl.appendChild(cell);
+    }
+  }
+  paintAll();
+}
+
+function symbolFor(idx) {
+  return SYMBOLS[idx % SYMBOLS.length];
+}
+
+function renderCell(cell, r, c) {
+  const idx = data[r][c];
+  if (idx == null) {
+    cell.style.background = "#fff";
+    cell.textContent = "";
+  } else {
+    const hex = DMC[idx][2];
+    cell.style.background = hex;
+    if (showSym) {
+      cell.textContent = symbolFor(idx);
+      cell.style.color = contrastText(hex);
+    } else {
+      cell.textContent = "";
+    }
+  }
+}
+
+function paintAll() {
+  const cells = gridEl.children;
+  for (const cell of cells) {
+    renderCell(cell, +cell.dataset.r, +cell.dataset.c);
+  }
+}
+
+function updateCell(r, c) {
+  const cell = gridEl.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+  if (cell) renderCell(cell, r, c);
+}
+
+/* ---------- Painting ---------- */
+let painting = false;
+
+function applyTool(r, c) {
+  if (tool === "erase") {
+    data[r][c] = null;
+  } else if (tool === "paint") {
+    if (!current) return;
+    data[r][c] = current.__idx;
+  } else if (tool === "fill") {
+    if (!current) return;
+    floodFill(r, c, data[r][c], current.__idx);
+    paintAll();
+    updateLegend();
+    return;
+  }
+  updateCell(r, c);
+  updateLegend();
+}
+
+function floodFill(r, c, target, replacement) {
+  if (target === replacement) return;
+  const stack = [[r, c]];
+  while (stack.length) {
+    const [cr, cc] = stack.pop();
+    if (cr < 0 || cc < 0 || cr >= rows || cc >= cols) continue;
+    if (data[cr][cc] !== target) continue;
+    data[cr][cc] = replacement;
+    stack.push([cr+1,cc],[cr-1,cc],[cr,cc+1],[cr,cc-1]);
+  }
+}
+
+gridEl.addEventListener("pointerdown", e => {
+  const cell = e.target.closest(".cell");
+  if (!cell) return;
+  painting = true;
+  gridEl.setPointerCapture(e.pointerId);
+  applyTool(+cell.dataset.r, +cell.dataset.c);
+});
+gridEl.addEventListener("pointermove", e => {
+  if (!painting || tool === "fill") return;
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const cell = el && el.closest ? el.closest(".cell") : null;
+  if (cell && gridEl.contains(cell)) applyTool(+cell.dataset.r, +cell.dataset.c);
+});
+window.addEventListener("pointerup", () => { painting = false; });
+
+/* ---------- Palette ---------- */
+const paletteEl = document.getElementById("palette");
+function buildPalette(filter) {
+  paletteEl.innerHTML = "";
+  const f = (filter || "").toLowerCase().trim();
+  DMC.forEach((d, i) => {
+    const [code, name, hex] = d;
+    if (f && !(code.toLowerCase().includes(f) || name.toLowerCase().includes(f))) return;
+    const sw = document.createElement("div");
+    sw.className = "swatch";
+    sw.style.background = hex;
+    sw.title = `DMC ${code} — ${name}`;
+    sw.textContent = code.length <= 4 ? code : "";
+    sw.style.color = contrastText(hex);
+    if (current && current.__idx === i) sw.classList.add("sel");
+    sw.addEventListener("click", () => selectColor(i));
+    paletteEl.appendChild(sw);
+  });
+}
+
+function selectColor(i) {
+  current = { code: DMC[i][0], name: DMC[i][1], hex: DMC[i][2], __idx: i };
+  if (tool === "erase") setTool("paint");
+  document.getElementById("currentChip").style.background = current.hex;
+  document.getElementById("currentLabel").textContent = `DMC ${current.code} — ${current.name}`;
+  document.querySelectorAll(".swatch.sel").forEach(s => s.classList.remove("sel"));
+  buildPalette(document.getElementById("search").value);
+}
+
+/* ---------- Legend (for print) ---------- */
+function updateLegend() {
+  const used = new Set();
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      if (data[r][c] != null) used.add(data[r][c]);
+
+  const legend = document.getElementById("legend");
+  if (!used.size) { legend.innerHTML = ""; return; }
+  const items = [...used].sort((a,b) => a-b);
+  let html = "<h2>Colour key</h2><table>";
+  items.forEach(i => {
+    const [code, name, hex] = DMC[i];
+    html += `<tr><td><span class="sw" style="background:${hex}"></span></td>`
+          + `<td>${showSym ? symbolFor(i) : ""}</td>`
+          + `<td>DMC ${code}</td><td>${name}</td></tr>`;
+  });
+  html += "</table>";
+  legend.innerHTML = html;
+}
+
+/* ---------- Tools UI ---------- */
+function setTool(t) {
+  tool = t;
+  document.querySelectorAll(".tool-row button").forEach(b => b.classList.remove("active"));
+  document.getElementById("tool-" + t).classList.add("active");
+}
+document.getElementById("tool-paint").onclick = () => setTool("paint");
+document.getElementById("tool-erase").onclick = () => setTool("erase");
+document.getElementById("tool-fill").onclick  = () => setTool("fill");
+
+/* ---------- Controls ---------- */
+document.getElementById("resize").onclick = () => {
+  cols = clamp(+document.getElementById("cols").value, 1, 120);
+  rows = clamp(+document.getElementById("rows").value, 1, 120);
+  cellSize = clamp(+document.getElementById("cellsize").value, 6, 40);
+  initData(true);
+  buildGrid();
+  updateFinished();
+  updateLegend();
+};
+document.getElementById("clear").onclick = () => {
+  if (!confirm("Clear the whole pattern?")) return;
+  initData(false);
+  paintAll();
+  updateLegend();
+};
+document.getElementById("showsym").onchange = e => {
+  showSym = e.target.checked;
+  paintAll();
+  updateLegend();
+};
+document.getElementById("cellsize").onchange = e => {
+  cellSize = clamp(+e.target.value, 6, 40);
+  buildGrid();
+};
+document.getElementById("search").oninput = e => buildPalette(e.target.value);
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v || lo)); }
+
+/* ---------- Fabric count / finished size ---------- */
+function effectiveCount() {
+  // stitching "over 2" threads halves the effective stitches per inch
+  return count / over;
+}
+function finishedText() {
+  const ec = effectiveCount();
+  const wIn = cols / ec, hIn = rows / ec;
+  const wCm = wIn * 2.54, hCm = hIn * 2.54;
+  return `Finished on ${count} ct${over === 2 ? " over 2" : ""}: `
+       + `${wIn.toFixed(1)} × ${hIn.toFixed(1)} in  (${wCm.toFixed(1)} × ${hCm.toFixed(1)} cm)`;
+}
+function updateFinished() {
+  document.getElementById("finished").textContent = finishedText();
+}
+document.getElementById("count").onchange = e => { count = +e.target.value; updateFinished(); };
+document.getElementById("over").onchange  = e => { over  = +e.target.value; updateFinished(); };
+
+/* ---------- Print ---------- */
+document.getElementById("print").onclick = () => {
+  const t = document.getElementById("title").value || "DMC Pattern";
+  document.getElementById("printTitle").textContent =
+    `${t}  ·  ${cols} × ${rows} stitches  ·  ${finishedText()}`;
+  updateLegend();
+  window.print();
+};
+
+/* ---------- Save / Load ---------- */
+document.getElementById("save").onclick = () => {
+  const payload = { cols, rows, cellSize, count, over, showSym, title: document.getElementById("title").value, data };
+  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (payload.title || "dmc-pattern").replace(/\s+/g,"-") + ".json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+document.getElementById("load").onclick = () => document.getElementById("loadfile").click();
+document.getElementById("loadfile").onchange = e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const p = JSON.parse(reader.result);
+      cols = p.cols; rows = p.rows; cellSize = p.cellSize || 16;
+      count = p.count || 14; over = p.over || 1;
+      showSym = !!p.showSym; data = p.data;
+      document.getElementById("cols").value = cols;
+      document.getElementById("rows").value = rows;
+      document.getElementById("cellsize").value = cellSize;
+      document.getElementById("count").value = count;
+      document.getElementById("over").value = over;
+      document.getElementById("showsym").checked = showSym;
+      document.getElementById("title").value = p.title || "";
+      buildGrid();
+      updateFinished();
+      updateLegend();
+    } catch (err) { alert("Could not load file: " + err.message); }
+  };
+  reader.readAsText(file);
+  e.target.value = "";
+};
+
+/* ---------- Init ---------- */
+initData(false);
+buildGrid();
+updateFinished();
+buildPalette("");
+selectColor(DMC.findIndex(d => d[0] === "310")); // black default
+</script>
+</body>
+</html>
