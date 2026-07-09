@@ -2,6 +2,8 @@
 
 A single-file, no-dependency web app for designing counted cross-stitch charts with real DMC floss colours and printing them to A4.
 
+Made at my wife's request, and published here in case it's useful to others.
+
 **Live app:** https://yasiruk.github.io/dmc-pattern-designer/
 
 ## Features
