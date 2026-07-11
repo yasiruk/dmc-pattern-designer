@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>DMC Pattern Designer</title>
 <style>
   :root {
@@ -218,6 +221,12 @@
         <button id="copy" title="Copy region (⌘/Ctrl+C)" disabled>⧉ Copy</button>
         <button id="paste" title="Paste (⌘/Ctrl+V)" disabled>📋 Paste</button>
       </div>
+      <div class="tool-row">
+        <button id="move" title="Move selected region (M)" disabled>✥ Move</button>
+        <button id="rotate" title="Rotate selection/paste 90° (R)" disabled>↻ Rotate</button>
+        <button id="flip-h" title="Mirror horizontally (H)" disabled>↔ Mirror</button>
+        <button id="flip-v" title="Mirror vertically (V)" disabled>↕ Mirror</button>
+      </div>
       <div id="hint" style="font-size:11px;color:#888;min-height:14px;margin-bottom:6px"></div>
       <div class="current">
         <span class="chip" id="currentChip"></span>
@@ -242,9 +251,13 @@
       <label class="row" style="justify-content:flex-start;gap:8px">Title <input type="text" id="title" placeholder="My pattern"></label>
       <div class="btn-row">
         <button id="print" class="primary">🖨️ Print A4</button>
-        <button id="save">💾 Save</button>
-        <button id="load">📂 Load</button>
+        <button id="save">⬇️ Export file</button>
+        <button id="load">⬆️ Import file</button>
       </div>
+      <div class="btn-row" style="margin-top:6px">
+        <button id="newpattern">🆕 New</button>
+      </div>
+      <div id="autosaveStatus" style="font-size:11px;color:#888;margin-top:6px">Auto-save on</div>
       <input type="file" id="loadfile" accept="application/json" style="display:none">
     </fieldset>
   </aside>
@@ -526,7 +539,15 @@ window.addEventListener("keydown", e => {
     return;
   }
   const mod = e.metaKey || e.ctrlKey;
-  if (!mod) return;
+  if (!mod) {
+    if (!selection && !clipboard) return;
+    const pk = e.key.toLowerCase();
+    if (pk === "r") { e.preventDefault(); doTransform(rotateCW, "Rotated 90°"); }
+    else if (pk === "h") { e.preventDefault(); doTransform(flipH, "Mirrored ↔"); }
+    else if (pk === "v") { e.preventDefault(); doTransform(flipV, "Mirrored ↕"); }
+    else if (pk === "m" && selection) { e.preventDefault(); startMove(); }
+    return;
+  }
   const k = e.key.toLowerCase();
   if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
   else if ((k === "z" && e.shiftKey) || k === "y") { e.preventDefault(); redo(); }
@@ -675,7 +696,9 @@ window.addEventListener("pointerup", () => { painting = false; selecting = false
 let selection = null;              // {r0,c0,r1,c1}
 let selAnchor = null, selecting = false;
 let clipboard = null;              // 2D array of DMC indices / null
-let pasteMode = false, previewCells = [];
+let pasteMode = false, previewCells = [], pastePos = null;
+let moveMode = false, moveSource = null;
+let previewOutline = [], moveOutline = [];
 
 function getCell(r, c) { return gridEl.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`); }
 function setHint(t) { document.getElementById("hint").textContent = t || ""; }
@@ -694,13 +717,15 @@ function setSelection(ar, ac, br, bc) {
   selection = { r0: Math.min(ar, br), c0: Math.min(ac, bc), r1: Math.max(ar, br), c1: Math.max(ac, bc) };
   renderSelection();
   document.getElementById("copy").disabled = false;
+  updateTransformButtons();
   const w = selection.c1 - selection.c0 + 1, h = selection.r1 - selection.r0 + 1;
-  setHint(`Selected ${w} × ${h}. Copy with ⌘/Ctrl+C.`);
+  setHint(`Selected ${w} × ${h}. Rotate/Mirror it in place (R, H, V), or Copy with ⌘/Ctrl+C.`);
 }
 function clearSelection() {
   selection = null;
   renderSelection();
   document.getElementById("copy").disabled = true;
+  updateTransformButtons();
 }
 
 function copySelection() {
@@ -713,6 +738,7 @@ function copySelection() {
     clipboard.push(row);
   }
   document.getElementById("paste").disabled = false;
+  updateTransformButtons();
   setHint(`Copied ${c1 - c0 + 1} × ${r1 - r0 + 1}. Click Paste, then click a cell to place it.`);
 }
 
@@ -720,61 +746,217 @@ function enterPasteMode() {
   if (!clipboard) return;
   clearSelection();
   pasteMode = true;
+  moveMode = false;
   document.getElementById("paste").classList.add("active");
-  setHint("Paste mode: move over the grid, click to place. Esc to cancel.");
+  updateTransformButtons();
+  setHint("Paste mode: move over the grid, click to place. R rotate, H/V mirror, Esc to cancel.");
 }
 function exitPasteMode() {
   if (!pasteMode) return;
   clearPreview();
+  clearMoveSource();
   pasteMode = false;
+  moveMode = false;
+  moveSource = null;
+  pastePos = null;
   document.getElementById("paste").classList.remove("active");
+  updateTransformButtons();
   setHint("");
+}
+// Draw a single rectangle outline around a region using per-edge inset shadows
+// on the perimeter cells, so it reads as one continuous border.
+function outlineRegion(r0, c0, r1, c1, color, width, store) {
+  r0 = Math.max(0, r0); c0 = Math.max(0, c0);
+  r1 = Math.min(rows - 1, r1); c1 = Math.min(cols - 1, c1);
+  if (r1 < r0 || c1 < c0) return;
+  const w = width || 2;
+  for (let r = r0; r <= r1; r++)
+    for (let c = c0; c <= c1; c++) {
+      if (r !== r0 && r !== r1 && c !== c0 && c !== c1) continue; // interior — skip
+      const cell = getCell(r, c);
+      if (!cell) continue;
+      const p = [];
+      if (r === r0) p.push(`inset 0 ${w}px 0 0 ${color}`);
+      if (r === r1) p.push(`inset 0 -${w}px 0 0 ${color}`);
+      if (c === c0) p.push(`inset ${w}px 0 0 0 ${color}`);
+      if (c === c1) p.push(`inset -${w}px 0 0 0 ${color}`);
+      cell.style.boxShadow = p.join(",");
+      store.push(cell);
+    }
+}
+function clearOutline(store) {
+  store.forEach(cell => { cell.style.boxShadow = ""; });
+  store.length = 0;
 }
 function clearPreview() {
   previewCells.forEach(({ r, c }) => {
     const cell = getCell(r, c);
-    if (cell) { cell.style.outline = ""; cell.style.outlineOffset = ""; renderCell(cell, r, c); }
+    if (cell) renderCell(cell, r, c);
   });
   previewCells = [];
+  clearOutline(previewOutline);
 }
 function showPasteAt(r0, c0) {
   clearPreview();
+  pastePos = { r: r0, c: c0 };
   const cb = clipboard;
-  for (let i = 0; i < cb.length; i++)
-    for (let j = 0; j < cb[i].length; j++) {
+  const h = cb.length, w = cb[0].length;
+  for (let i = 0; i < h; i++)
+    for (let j = 0; j < w; j++) {
+      const idx = cb[i][j];
+      if (idx == null) continue; // transparent — leave the existing design visible
       const r = r0 + i, c = c0 + j;
       if (r < 0 || c < 0 || r >= rows || c >= cols) continue;
       const cell = getCell(r, c);
       if (!cell) continue;
-      const idx = cb[i][j];
-      cell.style.background = idx == null ? "#fff" : DMC[idx][2];
-      cell.textContent = (showSym && idx != null) ? symbolFor(idx) : "";
-      cell.style.outline = "1px dashed rgba(0,0,0,.55)";
-      cell.style.outlineOffset = "-1px";
+      cell.style.background = DMC[idx][2];
+      cell.textContent = showSym ? symbolFor(idx) : "";
       previewCells.push({ r, c });
     }
+  outlineRegion(r0, c0, r0 + h - 1, c0 + w - 1, "rgba(0,0,0,.75)", 2, previewOutline);
+  if (moveMode) markMoveSource(); // keep the source outline on top of the preview
 }
 function commitPaste(r0, c0) {
   if (!clipboard) return;
   pushHistory();
+  // For a move, vacate the original cells first (destination overwrites any overlap).
+  if (moveMode && moveSource) {
+    const { r0: sr0, c0: sc0, r1: sr1, c1: sc1 } = moveSource;
+    for (let r = sr0; r <= sr1; r++)
+      for (let c = sc0; c <= sc1; c++)
+        if (r >= 0 && c >= 0 && r < rows && c < cols) data[r][c] = null;
+  }
   const cb = clipboard;
   for (let i = 0; i < cb.length; i++)
     for (let j = 0; j < cb[i].length; j++) {
+      const idx = cb[i][j];
+      if (idx == null) continue; // transparent — don't cover the existing design
       const r = r0 + i, c = c0 + j;
       if (r < 0 || c < 0 || r >= rows || c >= cols) continue;
-      data[r][c] = cb[i][j];
+      data[r][c] = idx;
     }
   clearPreview();
+  clearMoveSource();
   new Set(cb.flat().filter(x => x != null)).forEach(idx => addRecent(idx));
+  const wasMove = moveMode;
   pasteMode = false;
+  moveMode = false;
+  moveSource = null;
+  pastePos = null;
   document.getElementById("paste").classList.remove("active");
   paintAll();
   updateLegend();
-  setHint("Pasted ✓ — click Paste to place another copy.");
+  updateTransformButtons();
+  setHint(wasMove ? "Moved ✓" : "Pasted ✓ — click Paste to place another copy.");
+}
+
+/* ---------- Transforms (rotate / mirror) & move ---------- */
+function updateTransformButtons() {
+  const on = !!(selection || clipboard || pasteMode);
+  ["rotate", "flip-h", "flip-v"].forEach(id => document.getElementById(id).disabled = !on);
+  document.getElementById("move").disabled = !selection;
+}
+function rotateCW(cb) {
+  const h = cb.length, w = cb[0].length;
+  const out = Array.from({ length: w }, () => new Array(h));
+  for (let i = 0; i < h; i++)
+    for (let j = 0; j < w; j++) out[j][h - 1 - i] = cb[i][j];
+  return out;
+}
+function flipH(cb) { return cb.map(row => row.slice().reverse()); }
+function flipV(cb) { return cb.slice().reverse(); }
+
+function blockFromSelection() {
+  const { r0, c0, r1, c1 } = selection;
+  const b = [];
+  for (let r = r0; r <= r1; r++) {
+    const row = [];
+    for (let c = c0; c <= c1; c++) row.push(data[r][c]);
+    b.push(row);
+  }
+  return b;
+}
+
+// Transform the selected region directly on the canvas, anchored at its top-left.
+function transformSelectionInPlace(fn, label) {
+  const { r0, c0 } = selection;
+  const src = blockFromSelection();
+  const out = fn(src);
+  const oh = src.length, ow = src[0].length;
+  const nh = out.length, nw = out[0].length;
+  pushHistory();
+  // clear the old footprint
+  for (let i = 0; i < oh; i++)
+    for (let j = 0; j < ow; j++) {
+      const r = r0 + i, c = c0 + j;
+      if (r < rows && c < cols) data[r][c] = null;
+    }
+  // write the transformed block, clipping at the grid edges
+  let maxR = r0, maxC = c0;
+  for (let i = 0; i < nh; i++)
+    for (let j = 0; j < nw; j++) {
+      const r = r0 + i, c = c0 + j;
+      if (r >= rows || c >= cols) continue;
+      data[r][c] = out[i][j];
+      if (r > maxR) maxR = r;
+      if (c > maxC) maxC = c;
+    }
+  paintAll();
+  updateLegend();
+  new Set(out.flat().filter(x => x != null)).forEach(idx => addRecent(idx));
+  selection = { r0, c0, r1: maxR, c1: maxC };
+  renderSelection();
+  const clipped = (r0 + nh > rows || c0 + nw > cols);
+  setHint(`${label} ✓ — ${nw} × ${nh}${clipped ? " (clipped at edge)" : ""}. Copy or Move it, or keep transforming.`);
+}
+
+// Transform the clipboard being pasted/moved, refreshing the live preview.
+function transformClipboard(fn, label) {
+  if (!clipboard) return;
+  clipboard = fn(clipboard);
+  if (pasteMode && pastePos) showPasteAt(pastePos.r, pastePos.c);
+  else if (!pasteMode) enterPasteMode();
+  setHint(`${label} ✓ — ${clipboard[0].length} × ${clipboard.length}. Click a cell to place, Esc to cancel. (R rotate, H/V mirror)`);
+}
+
+// Route a transform to whichever context is active.
+function doTransform(fn, label) {
+  if (pasteMode) transformClipboard(fn, label);
+  else if (selection) transformSelectionInPlace(fn, label);
+  else if (clipboard) transformClipboard(fn, label);
+}
+
+/* ---------- Move ---------- */
+function startMove() {
+  if (!selection) return;
+  clipboard = blockFromSelection();
+  moveSource = { r0: selection.r0, c0: selection.c0, r1: selection.r1, c1: selection.c1 };
+  document.getElementById("paste").disabled = false;
+  clearSelection();
+  pasteMode = true;
+  moveMode = true;
+  pastePos = null;
+  markMoveSource();
+  document.getElementById("paste").classList.add("active");
+  updateTransformButtons();
+  setHint("Move: hover the grid, click to drop. R rotate, H/V mirror, Esc to cancel.");
+}
+function markMoveSource() {
+  clearMoveSource();
+  if (!moveSource) return;
+  const { r0, c0, r1, c1 } = moveSource;
+  outlineRegion(r0, c0, r1, c1, "rgba(43,122,91,.9)", 2, moveOutline);
+}
+function clearMoveSource() {
+  clearOutline(moveOutline);
 }
 
 document.getElementById("copy").onclick = copySelection;
 document.getElementById("paste").onclick = enterPasteMode;
+document.getElementById("move").onclick = startMove;
+document.getElementById("rotate").onclick = () => doTransform(rotateCW, "Rotated 90°");
+document.getElementById("flip-h").onclick = () => doTransform(flipH, "Mirrored ↔");
+document.getElementById("flip-v").onclick = () => doTransform(flipV, "Mirrored ↕");
 
 /* ---------- Palette ---------- */
 const paletteEl = document.getElementById("palette");
@@ -837,6 +1019,7 @@ function buildRecent() {
 
 /* ---------- Legend (for print) ---------- */
 function updateLegend() {
+  scheduleAutosave();
   const used = new Set();
   for (let r = 0; r < rows; r++)
     for (let c = 0; c < cols; c++)
@@ -898,6 +1081,7 @@ document.getElementById("showsym").onchange = e => {
 document.getElementById("cellsize").onchange = e => {
   cellSize = clamp(+e.target.value, 6, 40);
   buildGrid();
+  scheduleAutosave();
 };
 document.getElementById("search").oninput = e => buildPalette(e.target.value);
 
@@ -918,8 +1102,9 @@ function finishedText() {
 function updateFinished() {
   document.getElementById("finished").textContent = finishedText();
 }
-document.getElementById("count").onchange = e => { count = +e.target.value; updateFinished(); };
-document.getElementById("over").onchange  = e => { over  = +e.target.value; updateFinished(); };
+document.getElementById("count").onchange = e => { count = +e.target.value; updateFinished(); scheduleAutosave(); };
+document.getElementById("over").onchange  = e => { over  = +e.target.value; updateFinished(); scheduleAutosave(); };
+document.getElementById("title").addEventListener("input", scheduleAutosave);
 
 /* ---------- Print ---------- */
 document.getElementById("print").onclick = () => {
@@ -932,9 +1117,68 @@ document.getElementById("print").onclick = () => {
   window.print();
 };
 
-/* ---------- Save / Load ---------- */
+/* ---------- Serialize / apply ---------- */
+function serialize() {
+  return { cols, rows, cellSize, count, over, showSym, title: document.getElementById("title").value, data };
+}
+function applyState(p) {
+  cols = p.cols; rows = p.rows; cellSize = p.cellSize || 16;
+  count = p.count || 14; over = p.over || 1;
+  showSym = !!p.showSym; data = p.data;
+  document.getElementById("cols").value = cols;
+  document.getElementById("rows").value = rows;
+  document.getElementById("cellsize").value = cellSize;
+  document.getElementById("count").value = count;
+  document.getElementById("over").value = over;
+  document.getElementById("showsym").checked = showSym;
+  document.getElementById("title").value = p.title || "";
+  resetHistory();
+  buildGrid();
+  updateFinished();
+  updateLegend();
+}
+
+/* ---------- Auto-save (browser localStorage) ---------- */
+const AUTOSAVE_KEY = "dmc-autosave";
+let autosaveReady = false, autosaveTimer = null;
+function writeAutosave() {
+  try {
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(serialize()));
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    const ss = String(now.getSeconds()).padStart(2, "0");
+    document.getElementById("autosaveStatus").textContent = `Auto-saved ✓ ${hh}:${mm}:${ss}`;
+  } catch (e) {
+    document.getElementById("autosaveStatus").textContent = "Auto-save unavailable (storage blocked)";
+  }
+}
+function scheduleAutosave() {
+  if (!autosaveReady) return;
+  document.getElementById("autosaveStatus").textContent = "Saving…";
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(writeAutosave, 500);
+}
+function loadAutosave() {
+  let raw;
+  try { raw = localStorage.getItem(AUTOSAVE_KEY); } catch (e) { return false; }
+  if (!raw) return false;
+  try {
+    const p = JSON.parse(raw);
+    if (!p || !Array.isArray(p.data)) return false;
+    applyState(p);
+    return true;
+  } catch (e) { return false; }
+}
+// Flush any pending save immediately when leaving/hiding the page.
+window.addEventListener("beforeunload", () => { if (autosaveReady) writeAutosave(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && autosaveReady) writeAutosave();
+});
+
+/* ---------- Export / Import file / New ---------- */
 document.getElementById("save").onclick = () => {
-  const payload = { cols, rows, cellSize, count, over, showSym, title: document.getElementById("title").value, data };
+  const payload = serialize();
   const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -949,34 +1193,34 @@ document.getElementById("loadfile").onchange = e => {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const p = JSON.parse(reader.result);
-      cols = p.cols; rows = p.rows; cellSize = p.cellSize || 16;
-      count = p.count || 14; over = p.over || 1;
-      showSym = !!p.showSym; data = p.data;
-      document.getElementById("cols").value = cols;
-      document.getElementById("rows").value = rows;
-      document.getElementById("cellsize").value = cellSize;
-      document.getElementById("count").value = count;
-      document.getElementById("over").value = over;
-      document.getElementById("showsym").checked = showSym;
-      document.getElementById("title").value = p.title || "";
-      resetHistory();
-      buildGrid();
-      updateFinished();
-      updateLegend();
+      applyState(JSON.parse(reader.result));
+      scheduleAutosave();
     } catch (err) { alert("Could not load file: " + err.message); }
   };
   reader.readAsText(file);
   e.target.value = "";
 };
+document.getElementById("newpattern").onclick = () => {
+  if (!confirm("Start a new blank pattern? This clears the current auto-saved design.")) return;
+  document.getElementById("title").value = "";
+  initData(false);
+  resetHistory();
+  buildGrid();
+  updateFinished();
+  updateLegend();
+  scheduleAutosave();
+};
 
 /* ---------- Init ---------- */
-initData(false);
-buildGrid();
-updateFinished();
+if (!loadAutosave()) {           // restore last session from this browser, if any
+  initData(false);
+  buildGrid();
+  updateFinished();
+}
 selectColor(DMC.findIndex(d => d[0] === "310")); // black default
 buildRecent();
 buildPalette("");
+autosaveReady = true;            // begin auto-saving only after the initial load
 </script>
 </body>
 </html>
